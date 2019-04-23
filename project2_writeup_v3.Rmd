@@ -1,0 +1,660 @@
+---
+title: "STAT 154: Project 2 Cloud Data"
+author: "Anh Bui (ID# 3034323491) and Vincent Myers (ID# 3034325740)"
+date: "April 26, 2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+## Problem 1: Data Collection and Exploration
+
+### Part (a)
+
+Introduction: Understanding of carbon disoxide levels in the Arctic requires accurate Arctic-wide measurements of cloud coverage, as clouds modulate the sensitivity of the Arctic to increasing surface air temperatures. Clouds are difficult to differentiate from ice and snow, as they have many of the same visual properties. Understanding cloud cover in the Arctic is critical to evaluating its impact on atmospheric radiation (and therefore warming) in the Arctic. The launch of MISR on NASA's Terra satellite in 1999 provides nine viewing angles and four spectral bands, covering a 360-km wide swath of Earth's curface. The cloud detection algorithm used by MISR was designed before MISR was launched. The algorithm does not work well over polar regions, and potential alternative algorithms are limted by the massive amount of data that must be processed. The solution proposed by the paper involves finding cloud-free pixels, instead of the prior approach of looking for cloudy pixels. The solution uses an ELCM algorithm to label the data as cloudy or not-cloudy, and then uses QDA to compute a probability of cloudiness for each pixel.
+
+Data and Methodology: The data was collected from 10 MISR orbits of Path 26 over the Arctic, Northern Greenland and Baffin Bay. The problem was solved in three steps: (1) construct three features (CORR, SD and NDAI) using EDA and domain knowledge; (2) build the ELCM algorithm by setting thresholds on each of the three features; and (3) predicting the probability of cloudiness using QDA on the expert labels.
+
+Results: The ELCM algorithm has an agreement rate (agreement with the expert labels) of 91.8%, which compares favorably to the agreement rates for MISR ASCM (83.23%), SDCM (80%), and the offline SVM (80.99%). The ELCM-QDA solution provides additional information in the form of cloudiness probabilities.
+
+Conclusion: The paper shows the importance of the three chosen features (CORR, SD and NDAI) in determining cloudiness of each pixel. It also highlights the importance of having statisticians involved in a study from the start in order to help design the processes, and illustrates the usefulness of statistical methods. Finally, the paper contributes to an improved understanding of the relationship between cloud cover and changes in the Artic climate.
+
+### Part (b)
+
+There are 36.8 percent of the pixels are labeled as -1 (cloud-free), 23.4 percent are labeled as 1 (cloudy), and 39.8 percent of the pixels are not labeled.  Most of the pixels (72%) with an x-coordinate greater than 300 are labeled cloud-free. In general, the pixels are grouped by the expert labels; clouds pixels are clustered together, non-cloud pixels are clustered together, and unlabeled pixels are clustered together. Because of these clusters, we would not interpret the data to be independently distributed; for instance, if a given pixel is surrounded by cloud pixels, that pixel is very likely to be cloudy as well.
+
+```{r, echo=FALSE, fig.height=3, fig.width=6, fig.align="center"}
+setwd("C:\\Users\\vjmye\\Desktop\\Berkeley\\STAT154\\project2")
+
+im1 <- read.table("image1.txt")
+im2 <- read.table("image2.txt")
+im3 <- read.table("image3.txt")
+data <- rbind(im1, im2, im3)
+colnames(data) <- c("y", "x", "label", "NDAI", "SD", "CORR", "DF", "CF", "BF", "AF", "AN")
+data$label <- factor(data$label)
+
+#Calculate number of pixels in each class
+#number_neg1 = sum(data$label==-1)/nrow(data)*100
+#number_pos1 = sum(data$label==1)/nrow(data)*100
+#number_0 = sum(data$label==0)/nrow(data)*100
+
+library(ggplot2)
+ggplot(data = data, mapping = aes(x = x, y = y)) +  geom_point(aes(colour = label), size=0.5) + 
+         scale_colour_manual(values = c("navyblue", "grey39","cyan"), labels=c("Cloud Free", "Unclassified", "Cloudy")) + 
+         xlab("x coordinate") + ylab("y coordinate") + 
+         labs(colour = "Expert label") + ggtitle("Expert classification")
+```
+
+### Part (c)
+
+The correlation plot demonstrates that the values of the angular features are highly correlated with one another. The angles AF, AN and BF have strong negative correlations with CORR, NDAI and SD. NDAI and SD are positively correlated with one another.
+
+```{r,echo=FALSE}
+library(dplyr)
+library(stringr)
+library(corrplot)
+
+data_histogram_neg1 = data %>% filter(label==-1)
+data_histogram_pos1 = data %>% filter(label==1)
+
+median_radiance = data %>% group_by(label) %>% 
+  mutate(median_DF=median(DF)) %>% 
+  mutate(median_CF=median(CF)) %>% 
+  mutate(median_BF=median(BF)) %>% 
+  mutate(median_AF=median(AF)) %>% 
+  mutate(median_AN=median(AN)) %>% 
+  distinct(label, median_AN,median_AF,median_BF,median_CF,median_DF) %>%
+  filter(label != 0) %>%
+  data.frame() %>%
+  dplyr::select(-label) %>%
+  as.matrix()
+
+ang_names <- colnames(median_radiance) %>% str_sub(start=8L)
+colnames(median_radiance) <- ang_names
+
+# correlation plot 
+cor_mat <- cor(data[,4:11])
+corrplot(cor_mat, type="lower", order="hclust", title="Correlations Between Features", mar=c(0,0,1,0))
+```
+
+The charts below demonstrate some of the differences between cloudy pixels and cloud-free pixels. In general, cloudy pixels have higher CORR, SD, and NDAI values than cloud-free pixels. Cloudy pixels also have lower median radiance angles for AN, AF, BF and CF than cloud-free pixels.
+
+```{r,echo=FALSE}
+# histograms by label
+options(scipen=10000)
+par(mfrow=c(2,2))
+hist(data_histogram_neg1[,c("CORR")],col = "blue",main = "Histogram of CORR", 
+       xlab = "CORR")
+hist(data_histogram_pos1[,c("CORR")],col="red",add=T)
+legend("topright",c("Cloud-free (-1)","Cloudy (1)"),title="Label",fill=c("blue","red"),cex = 0.6)
+
+hist(data_histogram_neg1[,c("SD")],col = "blue",main = "Histogram of SD", 
+       xlab = "SD")
+hist(data_histogram_pos1[,c("SD")],col="red",add=T)
+legend("topright",c("Cloud-free (-1)","Cloudy (1)"),title="Label",fill=c("blue","red"),cex = 0.6)
+
+hist(data_histogram_neg1[,c("NDAI")],col = "blue",main = "Histogram of NDAI", 
+       xlab = "NDAI")
+hist(data_histogram_pos1[,c("NDAI")],col="red",add=T)
+legend("topright",c("Cloud-free (-1)","Cloudy (1)"),title="Label",fill=c("blue","red"),cex = 0.6)
+
+barplot(median_radiance,beside=TRUE,ylim = c(0,700), main = "Median radiance angle",col=c("blue","red"))
+legend("topleft",c("Cloud-free (-1)","Cloudy (1)"),title="Label",fill=c("blue","red"),cex = 0.6)
+
+```
+
+
+## Problem 2: Preparation
+
+### Part (a)
+
+**First Method:** Divide the data by the expert labels (-1 and 1), and use 20 percent of the data in each category for testing and another 20 percent for validation (leaving 60 percent for training). This ensures that both cloudy and cloud-free data are well-represented in each of the training, validation, and test sets. 
+
+**Second Method:** Split the data into blocks based on the x and y-coordinates.  For example, the first block includes observations that have x-coordinate and y-coordinate values that are less than or equal to 100; the second block includes data points with x-coordinate and y-coordinate values between 100 and 200; and so on. We can use 20 percent of the observations in each block for the test set and another 20 percent of each block for the validation set (again leaving 60 percent for training).   
+
+```{r,echo=FALSE}
+###First way to split data
+
+library(dplyr)
+#Take out all data with labels = 0
+row_neg1 = which(data$label==-1)
+row_pos1 = which(data$label==1)
+
+row_neg1_test_size = floor(length(row_neg1)*0.2)
+row_pos1_test_size = floor(length(row_pos1)*0.2)
+
+set.seed(1)
+test_neg1 = sample(row_neg1,size = row_neg1_test_size,replace=FALSE)
+test_pos1 = sample(row_pos1,size = row_pos1_test_size,replace=FALSE)
+test = append(test_neg1,test_pos1)
+
+data.nontest = data[-test,]
+data.test1 = data[test,]
+
+row_neg1 = which(data.nontest$label==-1)
+row_pos1 = which(data.nontest$label==1)
+
+row_neg1_val_size = floor(length(row_neg1)*0.2)
+row_pos1_val_size = floor(length(row_pos1)*0.2)
+val_neg1 = sample(row_neg1,size = row_neg1_val_size,replace=FALSE)
+val_pos1 = sample(row_pos1,size = row_pos1_val_size,replace=FALSE)
+val = append(val_neg1,val_pos1)
+
+data.val1 = data.nontest[val,]
+data.train1 = data.nontest[-val,] %>% filter(label!=0)
+
+###Second way to split the data
+
+block1 = data %>% filter(x <= 200) %>% filter(y <= 200) %>% filter(label!= 0)
+block2 = data %>% filter(x <= 200) %>% filter(y > 200) %>% filter(label != 0)
+block3 = data %>% filter(x > 200) %>% filter(y <=200) %>% filter(label!=0)
+block4 = data %>% filter(x > 200) %>% filter(y > 200) %>% filter(label!=0)
+
+
+block1_test_size = floor(nrow(block1)*0.2)
+block2_test_size = floor(nrow(block2)*0.2)
+block3_test_size = floor(nrow(block3)*0.2)
+block4_test_size = floor(nrow(block4)*0.2)
+
+set.seed(1)
+test_block1 = sample(seq_len(nrow(block1)),size = block1_test_size,replace=FALSE)
+test_block2 = sample(seq_len(nrow(block2)),size = block2_test_size,replace=FALSE)
+test_block3 = sample(seq_len(nrow(block3)),size = block3_test_size,replace=FALSE)
+test_block4 = sample(seq_len(nrow(block4)),size = block4_test_size,replace=FALSE)
+
+data.test2 = rbind(block1[test_block1,],block2[test_block2,],block3[test_block3,],block4[test_block4,])
+
+block1.nontest = block1[-test_block1,]
+block2.nontest = block2[-test_block2,]
+block3.nontest = block3[-test_block3,]
+block4.nontest = block4[-test_block4,]
+
+block1_val_size = floor(nrow(block1.nontest)*0.2)
+block2_val_size = floor(nrow(block2.nontest)*0.2)
+block3_val_size = floor(nrow(block3.nontest)*0.2)
+block4_val_size = floor(nrow(block4.nontest)*0.2)
+
+set.seed(1)
+val_block1 = sample(seq_len(nrow(block1.nontest)),size = block1_val_size,replace=FALSE)
+val_block2 = sample(seq_len(nrow(block2.nontest)),size = block2_val_size,replace=FALSE)
+val_block3 = sample(seq_len(nrow(block3.nontest)),size = block3_val_size,replace=FALSE)
+val_block4 = sample(seq_len(nrow(block4.nontest)),size = block4_val_size,replace=FALSE)
+
+data.val2 = rbind(block1.nontest[val_block1,],block2.nontest[val_block2,],block3.nontest[val_block3,],block4.nontest[val_block4,])
+data.train2 = rbind(block1.nontest[-val_block1,],block2.nontest[-val_block2,],block3.nontest[-val_block3,],block4.nontest[-val_block4,])
+```
+
+### Part (b)
+
+Given a trivial classifier which sets all labels to -1, the accuracy rates of validation and test set are 61 percent (only considering data with expert labels).  The classifier would have a high accuracy rate if our random selection from the original data set had a higher-than-expected percentage of rows labeled as cloud-free.
+
+```{r,echo=FALSE}
+confu_val = table(rep(-1,nrow(data.val1)),data.val1$label)
+confu_test = table(rep(-1,nrow(data.test1)),data.test1$label)
+
+accuracy_val <- (confu_val[1,1])/sum(confu_val)
+accuracy_test <- (confu_test[1,1])/sum(confu_test)
+```
+
+### Part (c)
+
+To assess the relative importance of individual predictors in the model, we fit individual logistic regressions on each of the predictors, and chose the predictors that have smallest test error rates.  The three best predictors based on this standard are NDAI, SD, and CORR.
+
+```{r,echo=FALSE}
+#Fit individual logistic regression 
+library(InformationValue)
+Xnames <- c("NDAI","SD","CORR","DF","CF","BF","AF","AN")
+
+data.train.method1 = data.train1 %>% mutate(label=if_else(label==-1,0,1))
+data.val.method1 = data.val1 %>% mutate(label=if_else(label==-1,0,1))
+data.test.method1 = data.test1 %>% mutate(label=if_else(label==-1,0,1))
+
+data.train.method2 = data.train2 %>% mutate(label=if_else(label==-1,0,1))
+data.val.method2 = data.val2 %>% mutate(label=if_else(label==-1,0,1))
+data.test.method2 = data.test2 %>% mutate(label=if_else(label==-1,0,1))
+
+error_rate = rep(0,length(Xnames))
+for (i in 1:length(Xnames)) {
+X = model.matrix(as.formula(paste("~ ", Xnames[i])),data=data.train.method1)
+
+MD = glm(label~X+0, data=data.train.method1,family=binomial(link="logit"))
+X = model.matrix(as.formula(paste("~ ", Xnames[i])),data=data.test.method1)
+glm.probs = predict(MD, newdata = data.frame(X), type="response")
+optCutOff <- optimalCutoff(data.test.method1$label, glm.probs)[1] 
+
+error_rate[i]=misClassError(data.test.method1$label, glm.probs, threshold = optCutOff)
+}
+
+error_data = data.frame(cbind(error_rate,Xnames))
+error_data %>% arrange(error_rate)
+```
+
+### Part (d)
+
+Code for the generic cross validation function is posted on Github.
+
+```{r,echo=FALSE}
+CVgeneric <- function(classifier_labels,training_labels,n_folds,loss){
+require(caret)
+classifier_labels = classifier_labels 
+training_labels = training_labels
+n_folds = n_folds
+loss = loss
+
+folds <- createFolds(training_labels, k = n_folds, list = TRUE, returnTrain = FALSE)
+accuracy_rate <- rep(0,n_folds)
+error_rate <- rep(0,n_folds)
+
+for (i in 1:n_folds) {
+  pred.cv = classifier_labels[unlist(folds[i])]
+  orig.cv = training_labels[unlist(folds[i])]
+
+  confu_matrix = table(pred.cv,orig.cv)
+  accuracy_rate[i] = sum(diag(confu_matrix))/sum(confu_matrix)
+  error_rate[i] = 1- accuracy_rate[i]
+}
+mean_accuracy_cv = mean(accuracy_rate)
+mean_error_cv = mean(error_rate)
+
+
+if (loss == 'accuracy') {
+return(list("mean_cv" = mean_accuracy_cv,"accuracy" = accuracy_rate))
+}
+  else if (loss == 'error') {
+    return(list("mean_cv" = mean_error_cv,"error" = error_rate))
+    }
+}
+
+testgeneric = function(classifier_labels,test_labels,loss){
+classifier_labels = classifier_labels 
+test_labels = test_labels
+loss = loss
+  
+  confu_matrix = table(classifier_labels,test_labels)
+  accuracy_rate = sum(diag(confu_matrix))/sum(confu_matrix)
+  error_rate = 1- accuracy_rate
+
+if (loss == 'accuracy') {
+return("accuracy" = accuracy_rate)
+}
+  else if (loss == 'error') {
+    return("error" = error_rate)
+    }
+}
+
+```
+
+
+## Problem 3: Modeling
+
+### Part (a)
+
+Logistic regression and probit regression assumes that the observations are independent of each other, and that the independent variables show little or no multicollinearity.  The assumptions for logistic regression are not satisfied well in this study since the independent variables are highly-correlated, and the observations are not independently distributed due to the clustering of cloudy and cloud-free pixels.
+
+Linear discriminant analysis (LDA) and quadratic discriminant analysis (QDA) assume that each variable follows a normal distribution. The LDA model assumes that both classes of the data have equal variances.  As demonstrated by the histograms below, the NDAI, SD and CORR variables do not follow a normal distribution.
+
+```{r,echo=FALSE}
+###Check assumptions for models:
+feature = data[,c("NDAI","SD","CORR")]
+
+par(mfrow=c(2,2))
+M <-cor(feature)
+corrplot(M, type="upper", order="hclust",title = "Correlation plot",mar=c(0,0,1,0))
+
+for (i in 1:3) {
+  hist(feature[,i], main = paste("Histogram of" , names(feature)[i]), 
+       xlab = names(feature)[i], col='lightblue')
+}
+
+```
+
+The cross-validation accuracy rate for the combined training/validation set is generally lowest for probit regression. Logistic regression has a slightly higher accuracy rate, while LDA and QDA have the highest accuracy rates. The cross validation accuracy rates are shown by fold in the charts below. On the test set, the best performing method for the first data split is QDA (89.6% accuracy), followed in order by LDA, logistic regrssion, and probit regression; and the best performing method for the second plit was LDA (89.9% accuracy), followed in order by QDA, logistic regression and probit regression. Averaging the accuracy rates from the two methods, LDA has the highest test accuracy rate.
+
+```{r, echo=FALSE, fig.height=3, fig.width=6}
+
+###First method CV accuracy rate
+##Logistic regression
+library(ggpubr)
+library(pROC)
+library(InformationValue)
+data.cv.method1 = rbind(data.train.method1,data.val.method1)
+
+logistic_model = glm(label~NDAI+SD+CORR,data=data.cv.method1,family = binomial(link="logit"), control = list(maxit = 50))
+glm.probs = predict(logistic_model,type="response")
+glm.pred=rep(0 ,length(glm.probs))
+glm.pred[glm.probs >.5]= 1
+CV_logistic1 = CVgeneric(glm.pred,data.cv.method1$label,10,'accuracy')
+
+glm.probs.test = predict(logistic_model,newdata = data.test.method1 , type="response")
+glm.pred=rep(0 ,length(glm.probs.test))
+glm.pred[glm.probs.test >.5]= 1
+CV_logistic1.test = testgeneric(glm.pred,data.test.method1$label,'accuracy')
+
+# probit regression
+probit_model = glm(label~NDAI+SD+CORR,data=data.cv.method1,family = binomial(link="probit"), control = list(maxit = 50))
+glm.probs = predict(probit_model,type="response")
+glm.pred=rep(0 ,length(glm.probs))
+glm.pred[glm.probs >.5]= 1
+CV_probit1 = CVgeneric(glm.pred,data.cv.method1$label,10,'accuracy')
+
+glm.probs.test = predict(probit_model,newdata = data.test.method1 , type="response")
+glm.pred=rep(0 ,length(glm.probs.test))
+glm.pred[glm.probs.test >.5]= 1
+CV_probit1.test = testgeneric(glm.pred,data.test.method1$label,'accuracy')
+
+##LDA
+library(MASS)
+lda.fit = lda(label~NDAI+SD+CORR,data=data.cv.method1)
+lda.pred = predict(lda.fit)
+CV_LDA1 = CVgeneric(lda.pred$class,data.cv.method1$label,10,'accuracy')
+
+lda.pred.test = predict(lda.fit,newdata = data.test.method1)
+CV_LDA1.test = testgeneric(lda.pred.test$class,data.test.method1$label,'accuracy')
+
+##QDA
+qda.fit = qda(label~NDAI+SD+CORR,data=data.cv.method1)
+qda.pred = predict(qda.fit)
+CV_QDA1 = CVgeneric(qda.pred$class,data.cv.method1$label,10,'accuracy')
+qda.pred.test = predict(qda.fit,newdata = data.test.method1)
+CV_QDA1.test = testgeneric(qda.pred.test$class,data.test.method1$label,'accuracy')
+
+
+###Second method CV accuracy rate
+data.cv.method2 = rbind(data.train.method2,data.val.method2)
+
+logistic_model = glm(label~NDAI+SD+CORR,data=data.cv.method2,family = binomial(link="logit"),control = list(maxit = 50))
+glm.probs = predict(logistic_model,type="response")
+glm.pred=rep(0 ,length(glm.probs))
+glm.pred[glm.probs >.5]= 1
+CV_logistic2 = CVgeneric(glm.pred,data.cv.method2$label,10,'accuracy')
+
+glm.probs.test = predict(logistic_model,newdata = data.test.method2 , type="response")
+glm.pred=rep(0 ,length(glm.probs.test))
+glm.pred[glm.probs.test >.5]= 1
+CV_logistic2.test = testgeneric(glm.pred,data.test.method2$label,'accuracy')
+
+# probit regression
+probit_model = glm(label~NDAI+SD+CORR,data=data.cv.method2,family = binomial(link="probit"), control = list(maxit = 50))
+glm.probs = predict(probit_model,type="response")
+glm.pred=rep(0 ,length(glm.probs))
+glm.pred[glm.probs >.5]= 1
+CV_probit2 = CVgeneric(glm.pred,data.cv.method2$label,10,'accuracy')
+
+glm.probs.test = predict(probit_model,newdata = data.test.method2 , type="response")
+glm.pred=rep(0 ,length(glm.probs.test))
+glm.pred[glm.probs.test >.5]= 1
+CV_probit2.test = testgeneric(glm.pred,data.test.method2$label,'accuracy')
+
+
+##LDA
+lda.fit = lda(label~NDAI+SD+CORR,data=data.cv.method2)
+lda.pred = predict(lda.fit)
+CV_LDA2 = CVgeneric(lda.pred$class,data.cv.method2$label,10,'accuracy')
+
+lda.pred.test = predict(lda.fit,newdata = data.test.method2)
+CV_LDA2.test = testgeneric(lda.pred.test$class,data.test.method2$label,'accuracy')
+
+##QDA
+qda.fit = qda(label~NDAI+SD+CORR,data=data.cv.method2)
+qda.pred = predict(qda.fit)
+CV_QDA2 = CVgeneric(qda.pred$class,data.cv.method2$label,10,'accuracy')
+
+qda.pred.test = predict(qda.fit,newdata = data.test.method2)
+CV_QDA2.test = testgeneric(qda.pred.test$class,data.test.method2$label,'accuracy')
+
+# create results data frame for plotting
+CV_table <- data.frame(fold=rep(1:10, 4), 
+                       method=c(rep("Logistic Regression", 10), rep("Probit Regression", 10),
+                                rep("LDA", 10), rep("QDA", 10)),
+                       accuracy1=c(CV_logistic1$accuracy, CV_probit1$accuracy, CV_LDA1$accuracy, CV_QDA1$accuracy),
+                       accuracy2=c(CV_logistic2$accuracy, CV_probit2$accuracy, CV_LDA2$accuracy, CV_QDA2$accuracy))
+
+
+# plots
+cvplot1 <- ggplot(data=CV_table, aes(x=fold, y=accuracy1, color=method)) + geom_point() + geom_line() +
+  ylab("CV Accuracy Rate") + xlab("Fold") + ggtitle("First Data Split") + scale_x_continuous(breaks=seq(0,10,1)) +
+  theme(legend.title=element_blank())
+cvplot2 <- ggplot(data=CV_table, aes(x=fold, y=accuracy2, color=method)) + geom_point() + geom_line() +
+  ylab("CV Accuracy Rate") + xlab("Fold") + ggtitle("Second Data Split") + scale_x_continuous(breaks=seq(0,10,1)) +
+  theme(legend.title=element_blank())
+ggarrange(cvplot1, cvplot2, ncol = 2, nrow = 1, legend="bottom", common.legend=TRUE)
+
+test_acc1 <- c(log=CV_logistic1.test, pro=CV_probit1.test, lda=CV_LDA1.test, qda=CV_QDA1.test)
+test_acc2 <- c(log=CV_logistic2.test, pro=CV_probit2.test, lda=CV_LDA2.test, qda=CV_QDA2.test)
+
+```
+
+### Part (b)
+
+The ROC curve plots the Specificity on the x-axis (defined as 1 - FPR, where FPR is the False Positive Rate) and the Sensitivity (or the True Positive Rate) on the y-axis for all possible thresholds.  The plot below shows the ROC curves for all four models; the ROC curves are very similar, which makes the lines in the chart difficult to distinguish. The chart includes the point of the best threshold for the logistic regression curve (0.309). The chart demonstrates that, while a threshold of 0.5 has been used for all models up to this point, there may be accuracy gains by varying the threshold by model.
+
+```{r,echo=FALSE}
+
+# logistic
+logistic_model = glm(label~NDAI+SD+CORR,data=data.cv.method1,family = binomial(link="logit"),control = list(maxit = 50))
+glm.probs = predict(logistic_model,type="response")
+
+# probit
+probit_model = glm(label~NDAI+SD+CORR,data=data.cv.method1,family = binomial(link="probit"),control = list(maxit = 50))
+probit.probs <- predict(probit_model, type="response")
+
+##LDA
+lda.fit = lda(label~NDAI+SD+CORR,data=data.cv.method1)
+lda.pred = predict(lda.fit)
+
+##QDA
+qda.fit = qda(label~NDAI+SD+CORR,data=data.cv.method1)
+qda.pred = predict(qda.fit)
+
+# calculate and plot ROC curves
+log.roc <- roc(data.cv.method1$label, glm.probs)
+pro.roc <- roc(data.cv.method1$label, probit.probs)
+lda.roc <- roc(data.cv.method1$label, lda.pred$posterior[,2])
+qda.roc <- roc(data.cv.method1$label, qda.pred$posterior[,2])
+par(mfrow = c(1,1))
+plot(log.roc, print.thres=TRUE, main="ROC Curves")
+lines(pro.roc, col='darkgreen')
+lines(lda.roc, col='red')
+lines(qda.roc, col='blue')
+legend("bottomright",c("Logistic","Probit", "LDA", "QDA"), col=c("black","darkgreen", "red", "blue"), 
+       lty=c(1,1), cex=0.7)
+
+```
+
+
+### Part (c)
+
+Precision is the ratio of correctly predicted positive observations to the total predicted positive observations (True Positive / [True Postive + False Positive]).  High precision corresponds to a lower false positive rate. Recall is the ratio of correctly predicted positive observations to the all observations in actual class positive (True Positive / [True Positive + False Negative]). The F1 Score is the weighted average of Precision and Recall. Using the optimal thresholds for each model as determined in the previous section, the QDA model has the highest precision and the highest F1 Score, while the LDA model has the highest recall.
+
+```{r,echo=FALSE}
+log.thres <- coords(log.roc, "best", ret="threshold")
+pro.thres <- coords(pro.roc, "best", ret="threshold")
+lda.thres <- coords(lda.roc, "best", ret="threshold")
+qda.thres <- coords(qda.roc, "best", ret="threshold")
+
+logi.preds <- as.numeric(glm.probs > log.thres)
+pro.preds <- as.numeric(probit.probs > pro.thres)
+lda.preds <- as.numeric(lda.pred$posterior[,2] > lda.thres)
+qda.preds <- as.numeric(qda.pred$posterior[,2] > qda.thres)
+
+confu_logistic = table(logi.preds,data.cv.method1$label)
+confu_probit <- table(pro.preds, data.cv.method1$label)
+confu_lda = table(lda.preds,data.cv.method1$label)
+confu_qda = table(qda.preds,data.cv.method1$label)
+
+precision_logistic = confu_logistic[2,2]/(confu_logistic[2,2]+confu_logistic[2,1])
+recall_logistic = confu_logistic[2,2]/(confu_logistic[2,2]+confu_logistic[1,2])
+f1_logistic = 2*recall_logistic*precision_logistic/(recall_logistic+precision_logistic)
+
+precision_probit = confu_probit[2,2]/(confu_probit[2,2]+confu_probit[2,1])
+recall_probit = confu_probit[2,2]/(confu_probit[2,2]+confu_probit[1,2])
+f1_probit = 2*recall_probit*precision_probit/(recall_probit+precision_probit)
+
+precision_lda = confu_lda[2,2]/(confu_lda[2,2]+confu_lda[2,1])
+recall_lda = confu_lda[2,2]/(confu_lda[2,2]+confu_lda[1,2])
+f1_lda = 2*recall_lda*precision_lda/(recall_lda+precision_lda)
+
+precision_qda = confu_qda[2,2]/(confu_qda[2,2]+confu_qda[2,1])
+recall_qda = confu_qda[2,2]/(confu_qda[2,2]+confu_qda[1,2])
+f1_qda = 2*recall_qda*precision_qda/(recall_qda+precision_qda)
+
+precision = c(log=precision_logistic,prob=precision_probit, lda=precision_lda, qda=precision_qda)
+recall = c(log=recall_logistic, prob=recall_probit, lda=recall_lda, qda=recall_qda)
+f1=c(log=f1_logistic, prob=f1_probit, lda=f1_lda, qda=f1_qda)
+```
+
+## Problem 4: Diagnostics
+
+```{r, echo=FALSE}
+# checking new threshold values vs old threshold values
+#logistic
+CV_log_check = CVgeneric(logi.preds, data.cv.method1$label,10,'accuracy')
+
+# probit regression
+CV_prob_check = CVgeneric(pro.preds, data.cv.method1$label,10,'accuracy')
+
+##LDA
+CV_LDA_check = CVgeneric(lda.preds, data.cv.method1$label,10,'accuracy')
+
+##QDA
+CV_QDA_check = CVgeneric(qda.preds, data.cv.method1$label,10,'accuracy')
+
+newaccuracy <- c(log=CV_log_check$mean_cv, prob=CV_prob_check$mean_cv, lda=CV_LDA_check$mean_cv, qda=CV_QDA_check$mean_cv)
+oldaccuracy <- CV_table %>% group_by(method) %>% summarize(mean=mean(accuracy1)) %>% 
+  data.frame() %>% dplyr::select(mean) %>% as.vector()
+accuracy_comp <- data.frame(model=c("LDA", "Logistic", "Probit", "QDA", "Logistic", "Probit", "LDA", "QDA"),
+                            accuracy=c(oldaccuracy[,1], newaccuracy), 
+                            thres=c(rep("Threshold 0.5", 4), rep("Best ROC Threshold", 4)))
+
+```
+
+### Part (a)
+
+Using the updated threshold values from problem 3(b) above for each model, QDA has consistently higher accuracy rates than the other three models. Therefore, we will focus on the results from the QDA model for this section. The chart below demonstrates the increase in the cross-validation accuracy rates for the four models by using the updated threshold values from the ROC curves instead of using 0.5 as the threshold for all models. The chart also demonstrates that QDA is the most accurate model.
+
+```{r, echo=FALSE}
+
+ggplot(data=accuracy_comp, aes(x=model, y=accuracy, fill=thres)) + geom_bar(stat="identity", position="dodge") +
+  ylab("CV Accuracy Rate") + xlab("Model") + ggtitle("Accuracy Rates by Threshold") + 
+  coord_cartesian(ylim=c(0.88, 0.91)) + theme(legend.title=element_blank(), legend.position="bottom")
+
+```
+
+The table below shows the confusion matrix for the expert labels against the QDA predicted values for the test set, based on the first data split. The test error rate for the QDA model is 9.72%.
+
+```{r, echo=FALSE}
+
+# fit model on first data split
+data.train1 <- data.cv.method1
+data.train1[data.train1 == 0] <- -1
+data.train1$label <- factor(data.train1$label, levels=c(-1,1))
+qda.mod <- qda(label~NDAI+SD+CORR, data=data.train1)
+qda.pred.test <- predict(qda.mod, newdata = data.test.method1)
+qda.predictions.test <- as.numeric(qda.pred.test$posterior[,2] > qda.thres)
+qda.predictions.test[qda.predictions.test == 0] <- -1
+data.test.method1$label[data.test.method1$label == 0] <- -1
+round(table(data.test.method1$label, qda.predictions.test)/nrow(data.test.method1),4)
+```
+
+Below is the map shown in section 1(b) of this paper, with the colors based on the labels predicted by the QDA model rather than the expert labels.
+
+```{r, echo=FALSE}
+# fit qda model on full data set
+data_labs <- data %>% dplyr::select(x, y, label, NDAI, SD, CORR) %>% filter(label != 0)
+data_labs$label <- factor(data_labs$label, levels=c(-1,1))
+qda.mod <- qda(label~NDAI+SD+CORR, data=data_labs)
+qda.pred <- predict(qda.mod, newdata = data)
+data_pred <- data %>% mutate(pred = as.numeric(qda.pred$posterior[,2] > qda.thres))
+data_pred$pred[data_pred$pred == 0] <- -1
+data_errs <- data_pred %>% filter(label != 0) %>% mutate(err = ifelse(label==pred, 0, 1))
+ggplot(data = data_pred, mapping = aes(x = x, y = y)) +  geom_point(aes(colour = as.factor(pred)), size=0.5) + 
+         scale_colour_manual(values = c("navyblue", "cyan"), labels=c("Cloud Free", "Cloudy")) + 
+         xlab("x coordinate") + ylab("y coordinate") + 
+         labs(colour = "Predicted Labels") + ggtitle("QDA Predicted Values")
+
+```
+
+The charts below show scatterplots for each coupling of the three variables (NDAI, SD and CORR), demonstrating the actual labels along with the classification lines drawn by the QDA model.
+
+```{r, echo=FALSE, fig.height=4, fig.width=6}
+par(mfrow=c(2,2))
+library(klaR)
+partimat(factor(label)~NDAI+SD+CORR,data=data.cv.method1,method="qda")
+```
+
+
+### Part (b)
+
+The chart below shows the misclassified points only, plotting by the x-coordinate and the y-coordinate. The misclassified points which were expert labeled cloud-free are found largely at the bottom of the chart (below y-coordinate 150), and alongside the right edge of the chart; however, there is a large section at the top left coordinate of the chart where a large number of misclassified points from both categories are found. 
+
+```{r, echo=FALSE, fig.height=4, fig.width=6}
+
+# find misclassified points geographically
+data_errs_only <- data_errs %>% filter(err == 1) %>% mutate(errtype = ifelse(label==1, "Cloudy - Misclassified", "Cloud-Free - Misclassified"))
+ggplot(data_errs_only, aes(x=x, y=y, col=errtype)) + 
+  geom_point(size=0.5) + 
+  xlab("X-Coordinate") + ylab("Y-Coordinate") + 
+  ggtitle("Misclassified Points by Coordinates") + 
+  theme(legend.title=element_blank(), legend.position="bottom")
+```
+
+Below, the chart at left is a histogram of NDAI values classified by the expert labels and whether or not the QDA model misclassifies the pixels; and and right, a scatter plot of NDAI and SD, again based on the different classifications. The left chart demonstrates that cloudy and cloud-free pixels have separate but overlapping distributions by NDAI, and the misclassified points tend to fall in the overlapping portion of the distribution (i.e. cloud-free pixels at the high end of the cloud-free distribution have NDAI values more commonly associated with cloudy pixels, and are therefore misclassified as cloudy). The right chart demonstrates that points with high values of SD (larger than 30) and high values of NDAI (larger than 3) tend to be misclassified at a higher rate than the rest of the data.
+
+```{r, echo=FALSE}
+# find correctly classified points
+errtype <- rep("", nrow(data_errs))
+errtype[data_errs$label == 1 & data_errs$err == 0] <- "Cloudy - Correct Classification"
+errtype[data_errs$label == 1 & data_errs$err == 1] <- "Cloudy - Missclassified"
+errtype[data_errs$label == -1 & data_errs$err == 0] <- "Cloud-Free - Correct Classification"
+errtype[data_errs$label == -1 & data_errs$err == 1] <- "Cloud-Free - Misclassified"
+data_errs_desc <- data_errs %>% mutate(errtype = errtype)
+
+err_hist <- ggplot(data_errs_desc, aes(x=NDAI, fill=as.factor(errtype))) + 
+  geom_histogram(position="identity", alpha=0.5) +
+  ggtitle("Error Analysis by NDAI") + 
+  theme(legend.title=element_blank(), legend.position="bottom") +
+  guides(fill=guide_legend(nrow=2,byrow=TRUE))
+
+err_scat <- ggplot(data_errs_desc, aes(x=SD, y=NDAI, color=as.factor(errtype))) + geom_point(size=0.5) +
+  ggtitle("Classification by NDAI and SD") +
+  theme(legend.title=element_blank(), legend.position="bottom") +
+  guides(fill=guide_legend(nrow=2,byrow=TRUE))
+
+ggarrange(err_hist, err_scat, ncol = 2, nrow = 1, legend="bottom", common.legend=TRUE)
+```
+
+### Part (c)
+
+As shown above, the QDA model performs poorly when values of NDAI and SD are both high. As a solution, we have added an interaction term to the model, which multiplies the values of NDAI and SD. The classification table resulting from the updated model is below. By including the interaction term, we improve the test error rate from 9.72% in the previous model to 9.45% in the updated model. We expect that the updated model will work well on future data without expert labels, assuming that the data provided for this model is representative of future data to be modeled.
+
+```{r,echo=FALSE}
+data.train2 <- data.train1 %>% mutate(NDAI_SD = NDAI * SD)
+qda.mod2 <- qda(label~NDAI+SD+CORR+NDAI_SD, data=data.train2)
+data.test.method.update <- data.test.method1 %>% mutate(NDAI_SD = NDAI * SD)
+qda.pred.test2 <- predict(qda.mod2, newdata = data.test.method.update)
+
+qda.predictions.update <- as.numeric(qda.pred.test2$posterior[,2] > qda.thres)
+qda.predictions.update[qda.predictions.update == 0] <- -1
+round(table(data.test.method1$label, qda.predictions.update)/nrow(data.test.method1),4)
+
+```
+
+### Part (d)
+
+Our results are not materially different between the two ways of splitting the data.
+
+### Part (e)
+
+*Conclusion:* Our paper used three variables from the MISR data (NDAI, CORR and SD) to fit four different models in order to predict whether a given pixel is cloudy or cloud-free. The models we chose to analyze were logistic regression, probit regression, LDA and QDA. Prior to training the model, we split the data in two different ways that adjusted for the fact that the data is not independently distributed. After adjusting our threshold values for each model based on the output from the ROC curves, our team determined that the QDA model had the lowest error rate on test data (9.72%). In analyzing the data that was misclassified by the QDA model, we determined that data points with both high NDAI and high SD values were frequently misclassified. Due to this realization, we added an interaction term to the QDA model which was the product of the NDAI and SD values. With the inclusion of the interaction term, the error rate was further reduced from 9.72% to 9.45%.
+
+## GitHub Repo
+
+Our GitHub repo can be found at the following link: https://github.com/vincent-myers/stat154-proj2
+
+## Acknowledgements
+
+Anh was responsible for the initial data analysis for the project, and is responsible for Problem 2 (including the CV function). Vincent wrote the summary in section 1(a). The remainder of the sections were developed by both Anh and Vincent together. Our process started with Anh working through the data and providing an initial draft of the report, and Vincent subsequently working to fill in the remainder of the report. We would like to acknowledge the following link (https://rstudio-pubs-static.s3.amazonaws.com/35817_2552e05f1d4e4db8ba87b334101a43da.html) as the source for the idea and code for the partition plots in section 4(a).
